@@ -16,3 +16,5 @@ npm install
 ```
 npm start
 ```
+4️⃣
+use ```ngrok``` for public expose
