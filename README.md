@@ -2,7 +2,7 @@
 # Installation
 0️⃣
 ```
-git clone https://github.com/m1d0b4n/serv3r.git && cd serv3r
+git clone https://github.com/m1d0b4n/t3leserv.git && cd t3leserv
 ```
 1️⃣
 
