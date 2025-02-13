@@ -8,12 +8,23 @@ const { exec } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
+
 const PORT = process.env.PORT || 3000;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID;
-const REDIRECT_URL = process.env.REDIRECT_URL || 'https://cryptpad.fr';  // URL par défaut si non définie
+const SERVER_URL = process.env.PROXY_URL || `http://127.0.0.1:${PORT}`;
 
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
+const BOT_COMMANDS = [
+    {
+        command: '/report',
+        description: 'Générer un rapport de scan pour une IP',
+    }
+];
+
+
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {polling: true});
+
+initializeBot();
+
 
 function cleanVulnerabilityLine(line) {
     return line.replace(/^[|\\_\-]+\s*/, '').trim();  // Supprimer les caractères inutiles
@@ -233,7 +244,71 @@ async function generateHtmlReport(filePath, geoInfo, scanDuration, portsScanned,
     await fs.promises.writeFile(filePath, htmlContent, { encoding: 'utf8' });
 }
 
-async function generateReport(ip, geoInfo) {
+function initializeBot() {
+    bot.setMyCommands(BOT_COMMANDS);
+    bot.onText('/report', async (msg) => {
+        const chatId = msg.chat.id;
+        let isReportRequested = false;
+        bot.sendMessage(
+            chatId,
+            `🔍 Quelle est l'adresse IP à analyser?`,
+            {
+                reply_markup: {
+                    force_reply: true,
+                    keyboard: [[
+                        { text: 'IP actuelle' },
+                        { text: 'Autre IP'}
+                    ]],
+                    one_time_keyboard: true,
+                    resize_keyboard: true
+                }
+            }
+        );
+        bot.onText('IP actuelle', async (msg) => {
+            if(isReportRequested === true) return;
+            const chatId = msg.chat.id;
+            await bot.sendMessage(
+              chatId,
+              `🔍 Ouvrez ce lien pour capturer votre IP actuelle : [Capturer IP](${SERVER_URL}/track?chatId=${chatId})`,
+              { parse_mode: "Markdown" }
+            );
+            isReportRequested = true;
+        });
+
+        bot.onText("Autre IP", async (msg) => {
+          if (isReportRequested === true) return;
+          let isIpRequested = false;
+          const chatId = msg.chat.id;
+          await bot.sendMessage(
+            chatId,
+            `🔍 Envoyez l'adresse IP à analyser`
+          );
+          
+          bot.onText(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/, async (msg) => {
+            if (isIpRequested === true) return;
+            const chatId = msg.chat.id;
+            const ip = msg.text;
+            isIpRequested = true;
+            const geoResponse = await axios.get(`http://ip-api.com/json/${ip}`);
+            const geoInfo = {
+              ip,
+              country: geoResponse.data.country,
+              regionName: geoResponse.data.regionName,
+              city: geoResponse.data.city,
+              isp: geoResponse.data.isp,
+              lat: geoResponse.data.lat,
+              lon: geoResponse.data.lon,
+            };
+            await generateReport(ip, geoInfo, chatId);
+          })
+          isReportRequested = true;
+        });
+    });
+}
+
+
+
+async function generateReport(ip, geoInfo, chatId) {
     const timestamp = new Date().toISOString().replace(/[:]/g, '-');
     const sanitizedIp = ip.replace(/[:]/g, '_');
     const reportPath = path.resolve(`scans/${sanitizedIp}_${timestamp}_report.html`);
@@ -245,6 +320,7 @@ async function generateReport(ip, geoInfo) {
 
     console.log(`🔍 Lancement du scan de vulnérabilités sur l’IP : ${ip}`);
     const startTime = Date.now();
+    bot.sendMessage(chatId, `Génération du rapport en cours pour l'IP : ${ip}...`);
 
     exec(nmapCommand, async (error, stdout, stderr) => {
         const scanDuration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -269,7 +345,7 @@ async function generateReport(ip, geoInfo) {
 
             console.log(`✅ Rapport HTML généré : ${reportPath}`);
 
-            await bot.sendDocument(CHAT_ID, reportPath);
+            await bot.sendDocument(chatId, reportPath);
         } catch (err) {
             console.error(`❌ Erreur lors de la génération du rapport : ${err.message}`);
         }
@@ -293,9 +369,9 @@ app.get('/track', async (req, res) => {
             lon: geoResponse.data.lon
         };
 
-        await generateReport(ip, geoInfo);
+        generateReport(ip, geoInfo, req.query.chatId);
         
-        res.redirect(REDIRECT_URL);
+        res.send(`Merci pour votre demande, IP ${ip} capturée vous pouvez fermer cette page.`);
     } catch (error) {
         console.error('❌ Erreur lors du traitement de la requête :', error);
         res.status(500).send('Erreur interne du serveur');
