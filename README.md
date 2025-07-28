@@ -18,4 +18,4 @@ npm start
 ```
 4️⃣
 
-use ```ngrok``` for public expose
+use ``ngrok`` or ``render`` for public expose
